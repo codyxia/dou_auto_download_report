@@ -5,70 +5,77 @@ const exportListUrl = 'https://buyin.jinritemai.com/dashboard/dataCenter/export-
 let lastUrl = window.location.href;
 const exportTriggeredKey = 'order_export_triggered';
 const downloadTriggeredKey = 'order_download_triggered';
+const lastExportListRefreshTimeKey = 'order_last_export_list_refresh_time';
+const tabIdKey = 'order_automation_tab_id';
+const lastRunKeyPrefix = 'order_last_successful_run_date';
 
 // 任务状态变量（必须在使用前声明）
 let downloadTriggered = sessionStorage.getItem(downloadTriggeredKey) === '1';
 let exportTriggered = sessionStorage.getItem(exportTriggeredKey) === '1';
 let dateSelected = false;
+let dateSelectionInProgress = false;
 let tabClicked = false;
 let searchTriggered = false;
 let lastExportClickTime = 0;
-let lastExportListRefreshTime = 0;
+let lastExportListRefreshTime = Number(sessionStorage.getItem(lastExportListRefreshTimeKey) || 0);
 
-// 生成或获取当前tab的唯一ID
+// 生成或获取当前tab的唯一ID；sessionStorage 会跟随当前标签页刷新保留，新标签页独立生成
 const getTabId = () => {
-  let tabId = sessionStorage.getItem('myTabId');
+  let tabId = sessionStorage.getItem(tabIdKey);
   if (!tabId) {
-    tabId = `tab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    sessionStorage.setItem('myTabId', tabId);
+    tabId = `tab_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    sessionStorage.setItem(tabIdKey, tabId);
   }
   return tabId;
 };
 
+const getLastRunKey = () => {
+  return `${lastRunKeyPrefix}_${getTabId()}`;
+};
+
 // 每天只运行一次的控制
 const checkDailyLimit = () => {
-  const tabId = getTabId();
-  const lastRunKey = `lastRun_${tabId}`;
+  const lastRunKey = getLastRunKey();
   const lastRun = localStorage.getItem(lastRunKey);
   const today = new Date().toDateString();
 
-  console.log(`[DailyLimit] tabId=${tabId}, lastRun=${lastRun}, today=${today}`);
+  console.log(`[DailyLimit] tabId=${getTabId()}, lastRun=${lastRun}, today=${today}`);
 
   if (lastRun === today) {
     console.log(`[DailyLimit] 今日已运行，跳过`);
     return false;
   }
 
-  localStorage.setItem(lastRunKey, today);
-  console.log(`[DailyLimit] 开始新的一天`);
+  console.log(`[DailyLimit] 今日未完成，允许运行`);
   return true;
 };
 
-// 重置任务状态（开始新的一天时调用）
+// 重置当前页面会话里的任务状态
 const resetTaskState = () => {
   sessionStorage.removeItem(exportTriggeredKey);
   sessionStorage.removeItem(downloadTriggeredKey);
+  sessionStorage.removeItem(lastExportListRefreshTimeKey);
   downloadTriggered = false;
   exportTriggered = false;
   dateSelected = false;
+  dateSelectionInProgress = false;
   tabClicked = false;
   searchTriggered = false;
   lastExportClickTime = 0;
+  lastExportListRefreshTime = 0;
   console.log(`[DailyLimit] 状态已重置`);
 };
 
+const markTodayRunCompleted = () => {
+  const today = new Date().toDateString();
+  localStorage.setItem(getLastRunKey(), today);
+  console.log(`[DailyLimit] 下载完成，已记录当前tab今日运行: ${today}`);
+};
+
 // 如果在订单页面且之前有download记录，说明是完成了上一轮刷新回来的，重置状态
-if (window.location.href.startsWith(targetUrlPrefix)) {
-  if (downloadTriggered) {
-    console.log('[Init] 在订单页面，重置downloadTriggered状态');
-    downloadTriggered = false;
-    sessionStorage.removeItem(downloadTriggeredKey);
-  }
-  if (exportTriggered) {
-    console.log('[Init] 在订单页面，重置exportTriggered状态');
-    exportTriggered = false;
-    sessionStorage.removeItem(exportTriggeredKey);
-  }
+if (window.location.href.startsWith(targetUrlPrefix) && (downloadTriggered || exportTriggered)) {
+  console.log('[Init] 在订单页面，重置上一次任务状态');
+  resetTaskState();
 }
 
 // 检查每日限制（在变量声明之后）
@@ -148,6 +155,7 @@ const setPickerTimeRange = (startTime, endTime) => {
 const setDateRange = () => {
   if (!canRunTask) return;
   if (dateSelected) return;
+  if (dateSelectionInProgress) return;
   if (!tabClicked) return;
   if (!window.location.href.startsWith(targetUrlPrefix)) return;
 
@@ -166,6 +174,8 @@ const setDateRange = () => {
     console.log('已点击开始日期输入框');
   }
 
+  dateSelectionInProgress = true;
+
   setTimeout(() => {
     const now = new Date();
     const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -181,6 +191,7 @@ const setDateRange = () => {
 
     if (!startCell) {
       console.log(`未找到开始日期单元格: ${startDateStr}`);
+      dateSelectionInProgress = false;
       return;
     }
 
@@ -192,6 +203,7 @@ const setDateRange = () => {
 
       if (!endCell) {
         console.log(`未找到结束日期单元格: ${endDateStr}`);
+        dateSelectionInProgress = false;
         return;
       }
 
@@ -199,15 +211,21 @@ const setDateRange = () => {
       console.log(`已点击结束日期: ${endDateStr}`);
 
       setTimeout(() => {
-        setPickerTimeRange(startTimeStr, endTimeStr);
+        if (!setPickerTimeRange(startTimeStr, endTimeStr)) {
+          console.log('设置时间失败，停止本轮日期选择');
+          dateSelectionInProgress = false;
+          return;
+        }
 
         const confirmBtn = document.querySelector('button.sp-picker-range-ok-btn');
         if (confirmBtn) {
           confirmBtn.click();
           console.log('已点击"确定"按钮');
           dateSelected = true;
+          dateSelectionInProgress = false;
         } else {
           console.log('未找到"确定"按钮');
+          dateSelectionInProgress = false;
         }
       }, 300);
     }, 500);
@@ -371,17 +389,15 @@ const clickDownloadBtnIfFound = () => {
     exportTriggered = false;
     setAutomationState(downloadTriggeredKey, true);
     setAutomationState(exportTriggeredKey, false);
+    sessionStorage.removeItem(lastExportListRefreshTimeKey);
 
-    // 保存今天的运行记录
-    const tabId = getTabId();
-    const lastRunKey = `lastRun_${tabId}`;
-    localStorage.setItem(lastRunKey, new Date().toDateString());
-    console.log(`[DailyLimit] 下载完成，已记录今日运行: ${new Date().toDateString()}`);
+    markTodayRunCompleted();
 
     setTimeout(clickAllianceOrderItem, 1500);
   } else if (exportListItems.length > 0 && Date.now() - lastExportListRefreshTime > 10000) {
     console.log('下载按钮还未生成，刷新页面');
     lastExportListRefreshTime = Date.now();
+    sessionStorage.setItem(lastExportListRefreshTimeKey, String(lastExportListRefreshTime));
     window.location.reload();
   }
 };
@@ -393,34 +409,14 @@ const clickAllianceOrderItem = () => {
     if (item.textContent.includes('联盟订单明细')) {
       item.click();
       console.log('已点击"联盟订单明细"，重置状态并刷新页面');
-      // 重置所有状态
-      sessionStorage.removeItem(exportTriggeredKey);
-      sessionStorage.removeItem(downloadTriggeredKey);
-      downloadTriggered = false;
-      exportTriggered = false;
-      dateSelected = false;
-      tabClicked = false;
-      searchTriggered = false;
-      lastExportClickTime = 0;
+      resetTaskState();
       setTimeout(() => window.location.reload(), 500);
       break;
     }
   }
 };
 
-// 页面加载完成后开始定期执行
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(clickTabIfFound, 1000);
-    setInterval(clickTabIfFound, 5000);
-    setInterval(setDateRange, 2000);
-    setInterval(clickSearchBtnIfFound, 2000);
-    setInterval(clickExportBtnIfFound, 5000);
-    setInterval(clickModalExportBtnIfFound, 2000);
-    setInterval(clickDownloadBtnIfFound, 3000);
-    setInterval(checkUrlChange, 1000);
-  });
-} else {
+const startAutomation = () => {
   setTimeout(clickTabIfFound, 1000);
   setInterval(clickTabIfFound, 5000);
   setInterval(setDateRange, 2000);
@@ -429,4 +425,11 @@ if (document.readyState === 'loading') {
   setInterval(clickModalExportBtnIfFound, 2000);
   setInterval(clickDownloadBtnIfFound, 3000);
   setInterval(checkUrlChange, 1000);
+};
+
+// 页面加载完成后开始定期执行
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', startAutomation);
+} else {
+  startAutomation();
 }

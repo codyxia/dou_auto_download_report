@@ -2,10 +2,7 @@
   "manifest_version": 3,
   "name": "URL Monitor",
   "version": "1.0",
-  "description": "检测特定URL开头并打印console.log",
-  "permissions": [
-    "activeTab"
-  ],
+  "description": "自动下载表格数据",
   "content_scripts": [
     {
       "matches": ["https://buyin.jinritemai.com/*"],
