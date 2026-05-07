@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "URL Monitor",
+  "version": "1.0",
+  "description": "检测特定URL开头并打印console.log",
+  "permissions": [
+    "activeTab"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://buyin.jinritemai.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
